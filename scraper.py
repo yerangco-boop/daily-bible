@@ -28,6 +28,12 @@ TRANSLATION_LABEL = "개역개정"
 _OTHER_TRANSLATION_NAMES = ["개역한글", "쉬운성경", "새번역", "ESV"]
 
 # 해설/기도문/본문을 잘라내는 기준이 되는 고정 문구들.
+# 2026-08-30 실제 화면 캡처로 확인한 정확한 형식: "본문: 이사야(Isaiah)
+# 38:1 ~ 38:22 찬송가 363장" — 책이름과 절 사이에 영문 표기가 괄호로 끼어
+# 있어서, 예전의 단순 정규식(책이름 바로 뒤에 숫자)은 매번 실패했었다.
+REF_LINE_PATTERN = re.compile(
+    r"본문\s*[:：]\s*(?P<ref>.+?)\s*찬송가\s*(?P<hymn_no>\d+)\s*장"
+)
 ANCHOR_SUMMARY = "본문요약"
 ANCHOR_GOD = "하나님은 어떤 분입니까"
 ANCHOR_LESSON = "내게 주시는 교훈은 무엇입니까"
@@ -77,8 +83,7 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
     content = TodayContent(date_str=target_date.isoformat(), raw_text=text)
     content.mp3_url = build_mp3_url(target_date)
 
-    _extract_title_and_hymn(content, text)
-    _extract_verse_ref(content, text)
+    _extract_title_and_ref(content, text)
     _extract_verse_text(content, text)
     _extract_sections(content, text)
     _extract_credits(content, text)
@@ -86,13 +91,31 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
     return content
 
 
-def _extract_title_and_hymn(content: TodayContent, text: str) -> None:
-    # 찬송가 N장 패턴
-    m = re.search(r"찬송가\s*\d+\s*장", text)
-    if m:
-        content.hymn = m.group(0)
+def _extract_title_and_ref(content: TodayContent, text: str) -> None:
+    """제목 / 성경구절 / 찬송가를 추출한다.
 
-    # 날짜 바로 다음 줄들 중 너무 짧지 않은 첫 줄을 제목으로 추정
+    2026-08-30 실제 화면 캡처로 확인한 순서: 제목 줄 바로 다음에
+    "본문: 이사야(Isaiah) 38:1 ~ 38:22 찬송가 363장" 형식의 줄이 온다.
+    """
+    m = REF_LINE_PATTERN.search(text)
+    if m:
+        content.verse_ref = m.group("ref").strip()
+        content.hymn = f"찬송가 {m.group('hymn_no')}장"
+
+        # 참조 줄 바로 앞의 줄들 중, 날짜/라벨처럼 보이지 않는 첫 후보를 제목으로 쓴다.
+        before = text[: m.start()]
+        lines = [l.strip() for l in before.split("\n") if l.strip()]
+        date_pat = re.compile(r"\d{4}[.\-]\d{2}[.\-]\d{2}")
+        for cand in reversed(lines[-4:]):
+            if 2 <= len(cand) <= 40 and not date_pat.search(cand) and "매일성경" not in cand:
+                content.title = cand
+                break
+        return
+
+    # 폴백(참조 줄 형식이 바뀐 경우): 예전 방식으로라도 찬송가/제목을 시도한다.
+    m2 = re.search(r"찬송가\s*\d+\s*장", text)
+    if m2:
+        content.hymn = m2.group(0)
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     date_pat = re.compile(r"\d{4}[.\-]\d{2}[.\-]\d{2}")
     for i, line in enumerate(lines):
@@ -102,13 +125,6 @@ def _extract_title_and_hymn(content: TodayContent, text: str) -> None:
                     content.title = cand
                     break
             break
-
-
-def _extract_verse_ref(content: TodayContent, text: str) -> None:
-    # 예: "이사야 37:21-37:38" 또는 "이사야 37:21~38"
-    m = re.search(r"[가-힣]{2,6}\s?\d{1,3}[:장]\d{1,3}[-~]\d{0,3}[:]?\d{0,3}", text)
-    if m:
-        content.verse_ref = m.group(0)
 
 
 def _extract_verse_text(content: TodayContent, text: str) -> None:
@@ -169,9 +185,15 @@ def _extract_sections(content: TodayContent, text: str) -> None:
 
 
 def _extract_credits(content: TodayContent, text: str) -> None:
-    m = re.search(r"본문낭독\s*[:：]?\s*([^\n|]{2,20})", text)
+    # 실제 형식: "본문낭독:지음원(ERICA 한양대학교회) l 오디오해설:임수아(광주지부 총무)"
+    # 두 이름 사이 구분자가 정확히 어떤 문자인지 화면 캡처만으로는 확신할 수
+    # 없어서("l"처럼 보이는 세로줄 등), "오디오해설"이라는 단어 자체를 경계로
+    # 삼아 구분자가 무엇이든 상관없이 잘라낸다.
+    m = re.search(r"본문낭독\s*[:：]\s*(.+?)\s*오디오해설\s*[:：]\s*([^\n]{2,40})", text)
     if m:
-        content.reader_credit = m.group(1).strip()
+        content.reader_credit = m.group(1).strip(" |｜lL·-")
+        content.commentator_credit = m.group(2).strip()
+        return
     m = re.search(r"오디오해설\s*[:：]?\s*([^\n|]{2,30})", text)
     if m:
         content.commentator_credit = m.group(1).strip()
