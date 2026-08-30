@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>디버그</title>
+<style>
+  body{ font-family:-apple-system,sans-serif; padding:16px; background:#fff; color:#111; }
+  h2{ font-size:14px; margin:18px 0 6px; color:#B85F1E; }
+  pre{ white-space:pre-wrap; word-break:break-word; background:#f4f1e9; border:1px solid #ddd6c7; border-radius:8px; padding:10px; font-size:13px; line-height:1.6; }
+</style>
+</head>
+<body>
+  <p>status: {{ status }}</p>
+  {% if content %}
+    <h2>title</h2><pre>{{ content.title }}</pre>
+    <h2>verse_ref / hymn / verse_end_no</h2><pre>{{ content.verse_ref }} | {{ content.hymn }} | {{ content.verse_end_no }}</pre>
+    <h2>verse_text (성경본문)</h2><pre>{{ content.verse_text }}</pre>
+    <h2>verse_summary (본문 뒤 요약)</h2><pre>{{ content.verse_summary }}</pre>
+    <h2>note_god (하나님은 어떤 분입니까)</h2><pre>{{ content.note_god }}</pre>
+    <h2>note_lesson (내게 주시는 교훈은 무엇입니까)</h2><pre>{{ content.note_lesson }}</pre>
+    <h2>prayer (기도문)</h2><pre>{{ content.prayer }}</pre>
+    <h2>reader_credit / commentator_credit</h2><pre>{{ content.reader_credit }} | {{ content.commentator_credit }}</pre>
+    <h2>raw_text (페이지 원문 전체)</h2><pre>{{ content.raw_text }}</pre>
+  {% else %}
+    <p>아직 오늘 콘텐츠가 없습니다. 먼저 홈 화면(/)을 한 번 열어주세요.</p>
+  {% endif %}
+</body>
+</html>
