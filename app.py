@@ -197,6 +197,18 @@ def warm():
     return jsonify({"status": status})
 
 
+@app.route("/debug")
+@requires_auth
+def debug():
+    """스크래핑이 실제로 무엇을 추출했는지 원문과 함께 확인하는 화면.
+    해설/기도문 등이 잘못 추출됐을 때 원인을 바로 확인하기 위한 용도."""
+    with _lock:
+        is_today = STATE["date"] == today_str()
+        content = STATE["content"] if is_today else None
+        status = STATE["status"] if is_today else "idle"
+    return render_template("debug.html", content=content, status=status)
+
+
 @app.route("/healthz")
 def healthz():
     return "ok", 200
