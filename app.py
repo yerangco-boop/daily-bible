@@ -50,6 +50,11 @@ AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 400  # 약 400일 (브라우저 쿠키 최�
 # 바로 보여준다(무한 대기 방지).
 STT_TIMEOUT_SECONDS = int(os.environ.get("STT_TIMEOUT_SECONDS", "240"))
 
+# 매일 새벽 GitHub Actions(외부 무료 스케줄러)가 이 값을 알고 /warm 을
+# 호출해서, 두 분이 실제로 앱을 열기 전에 미리 콘텐츠 생성을 끝내둔다.
+# 아무나 트리거하지 못하도록 비밀 토큰으로 보호한다.
+WARM_SECRET = os.environ.get("WARM_SECRET", "")
+
 app = Flask(__name__)
 
 # ---- 아주 단순한 상태 저장소 (당일 캐시, 재시작하면 사라짐 — 의도된 동작) ----
@@ -220,6 +225,22 @@ def enter(token):
         secure=True,
     )
     return resp
+
+
+@app.route("/warm")
+def warm():
+    """외부 무료 스케줄러(GitHub Actions)가 매일 새벽 호출하는 예열 엔드포인트.
+    사람이 열기 전에 미리 스크래핑+STT를 시작해둔다. Basic Auth 대신
+    ?token= 쿼리로 보호한다(자동화 스크립트는 로그인 세션을 못 만드므로)."""
+    if not WARM_SECRET or request.args.get("token") != WARM_SECRET:
+        return "forbidden", 403
+    with _lock:
+        is_today = STATE["date"] == today_str()
+        status = STATE["status"] if is_today else "idle"
+    if status not in ("processing", "ready"):
+        _ensure_generation_started()
+        status = "processing"
+    return jsonify({"status": status})
 
 
 @app.route("/healthz")
