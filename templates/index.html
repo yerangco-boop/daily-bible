@@ -81,14 +81,6 @@
 
   .prayer-card p{ font-size:14px; white-space:pre-wrap; margin:0; }
 
-  .script-card .h{ display:flex; align-items:center; gap:8px; }
-  .script-card .tag{
-    font-size:10px; background:var(--ocean-soft); color:var(--ocean);
-    padding:2px 8px; border-radius:100px; text-transform:none; letter-spacing:0;
-  }
-  .script-card p{ font-size:14.5px; color:var(--charcoal-soft); line-height:1.9; white-space:pre-wrap; margin:0; }
-  .script-card .credit{ font-size:12px; color:var(--charcoal-soft); margin-top:10px; }
-
   .player{
     margin-top:14px;
     background:var(--charcoal);
@@ -123,6 +115,9 @@
       <button id="playBtn" aria-label="재생">▶</button>
       <div class="info">
         <div class="t">성경낭독 · 묵상해설 듣기</div>
+        {% if content.commentator_credit or content.reader_credit %}
+          <div class="credit">{% if content.reader_credit %}본문낭독: {{ content.reader_credit }}{% endif %}{% if content.commentator_credit %}{% if content.reader_credit %} · {% endif %}오디오해설: {{ content.commentator_credit }}{% endif %}</div>
+        {% endif %}
         <input id="seek" type="range" min="0" max="100" value="0">
       </div>
     </div>
@@ -153,14 +148,6 @@
     <section class="card prayer-card">
       <div class="h">기도문</div>
       <p>{{ content.prayer or "추출 실패 — 원본 페이지 확인 필요" }}</p>
-    </section>
-
-    <section class="card script-card">
-      <div class="h"><span>묵상해설 스크립트</span><span class="tag">자동생성 · 오탈자 있을 수 있음</span></div>
-      <p>{{ script_text or "스크립트가 아직 없습니다." }}</p>
-      {% if content.commentator_credit %}
-        <div class="credit">오디오해설: {{ content.commentator_credit }}{% if content.reader_credit %} · 성경낭독: {{ content.reader_credit }}{% endif %}</div>
-      {% endif %}
     </section>
   </main>
 
