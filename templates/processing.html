@@ -42,7 +42,9 @@
     {% else %}
       <div class="dot"></div>
       <h1>오늘의 말씀 준비 중</h1>
-      <p>성경본문을 가져오고 묵상해설 음성을 글로 옮기고 있어요. 보통 1~2분 정도 걸립니다.</p>
+      <p>성경본문을 가져오고 묵상해설 음성을 글로 옮기고 있어요. 보통 1~2분,
+      느릴 때는 5분 정도 걸릴 수 있어요. 음성 변환이 오래 걸리면 스크립트
+      없이 나머지 내용부터 보여드립니다.</p>
     {% endif %}
   </div>
   <script>
@@ -57,7 +59,7 @@
             location.reload();
           }
         }).catch(function () {});
-        if (tries > 60) { clearInterval(timer); } // 최대 약 5분 후 폴링 중단
+        if (tries > 100) { clearInterval(timer); } // 최대 약 8~9분 후 폴링 중단
       }, 5000);
     }
   </script>
