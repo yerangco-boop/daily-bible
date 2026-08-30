@@ -1,28 +1,28 @@
 """
 매일성경 웹앱 — 정표님 · 배우자님 전용
 
-설계 원칙(기획안 v3 기준):
+설계 원칙(기획안 v3 기준, 2026-08-30 STT 제거 이후 갱신):
   - Render 무료 웹서비스 "한 개"로 끝낸다. 별도 Cron Job / 외부 스케줄러 없음.
   - 그날 처음 접속한 사람의 요청이 곧 "오늘 콘텐츠 만들어줘" 트리거가 된다
     (온디맨드 생성). 이미 만들어진 날이면 메모리 캐시를 즉시 보여준다.
   - 과거 데이터는 저장하지 않는다 — 새 날짜가 되면 캐시를 통째로 덮어쓴다.
   - 오디오는 재호스팅하지 않고 원본 mp3 URL을 그대로 재생 링크로 쓴다.
+  - 음성을 텍스트로 자동 변환(STT)하지 않는다. 원본 사이트에 이미 텍스트로
+    있는 해설(하나님은 어떤 분입니까/내게 주시는 교훈은 무엇입니까)을 그대로
+    쓰고, 음성은 원본 그대로 재생만 제공한다 — Render 무료 CPU로는 STT가
+    비현실적으로 느렸기 때문에(정표님과 상의 후 2026-08-30 결정).
 """
 from __future__ import annotations
 
 import os
-import tempfile
 import threading
-import concurrent.futures
 import datetime as dt
 from zoneinfo import ZoneInfo
 from functools import wraps
 
-import requests
 from flask import Flask, render_template, jsonify, request, Response, redirect, url_for, make_response
 
 import scraper
-import stt
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -45,14 +45,10 @@ ACCESS_TOKENS = {
 AUTH_COOKIE = "db_auth"
 AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 400  # 약 400일 (브라우저 쿠키 최대 수명)
 
-# Render 무료 플랜의 약한 CPU에서는 whisper 모델 준비+음성인식이 예상보다
-# 훨씬 오래 걸릴 수 있다. 이 시간을 넘기면 스크립트 없이 나머지 콘텐츠라도
-# 바로 보여준다(무한 대기 방지).
-STT_TIMEOUT_SECONDS = int(os.environ.get("STT_TIMEOUT_SECONDS", "240"))
-
 # 매일 새벽 GitHub Actions(외부 무료 스케줄러)가 이 값을 알고 /warm 을
 # 호출해서, 두 분이 실제로 앱을 열기 전에 미리 콘텐츠 생성을 끝내둔다.
-# 아무나 트리거하지 못하도록 비밀 토큰으로 보호한다.
+# STT를 없앤 뒤로는 스크래핑만 하면 되므로 몇 초면 끝나지만, Render 무료
+# 플랜이 잠들어 있던 경우 깨우는 역할은 여전히 유효해서 남겨둔다.
 WARM_SECRET = os.environ.get("WARM_SECRET", "")
 
 app = Flask(__name__)
@@ -63,7 +59,6 @@ STATE = {
     "date": None,       # "YYYY-MM-DD" (KST 기준)
     "status": "idle",   # idle | processing | ready | error
     "content": None,    # scraper.TodayContent
-    "script": "",        # STT 결과
     "error": None,
 }
 
@@ -104,21 +99,14 @@ def requires_auth(f):
 
 # ---------------------------------------------------------------- 생성 로직
 def _generate_today() -> None:
-    """백그라운드 스레드에서 실행된다. 스크래핑 + STT 후 STATE를 채운다."""
+    """백그라운드 스레드에서 실행된다. 스크래핑만 하면 되므로 보통 몇 초 안에
+    끝난다(예전 STT 단계가 없어졌다)."""
     date_str = today_str()
     try:
         content = scraper.fetch_today()
-
-        script_text = ""
-        try:
-            script_text = _download_and_transcribe(content.mp3_url)
-        except Exception as e:  # STT 실패해도 나머지 콘텐츠는 보여준다
-            script_text = f"(자동 스크립트 생성에 실패했습니다: {e})"
-
         with _lock:
             STATE["date"] = date_str
             STATE["content"] = content
-            STATE["script"] = script_text
             STATE["status"] = "ready"
             STATE["error"] = None
     except Exception as e:  # noqa: BLE001
@@ -128,37 +116,6 @@ def _generate_today() -> None:
             STATE["error"] = str(e)
 
 
-def _download_and_transcribe(mp3_url: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=".mp3")
-    os.close(fd)
-    try:
-        with requests.get(mp3_url, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            with open(path, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1 << 16):
-                    f.write(chunk)
-
-        # 별도 스레드에서 STT를 돌리고, 제한 시간 안에 안 끝나면 포기한다.
-        # (무료 플랜 CPU가 느려서 모델 다운로드+추론이 얼마나 걸릴지 예측이
-        # 어렵다 — 무한정 "준비 중"에 머무르는 상황을 막는 게 목적)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(stt.transcribe_audio, path, "ko")
-        try:
-            return future.result(timeout=STT_TIMEOUT_SECONDS)
-        except concurrent.futures.TimeoutError:
-            # 백그라운드 스레드는 계속 돌 수 있지만(강제 종료는 못 함),
-            # 여기서는 기다리지 않고 바로 실패로 처리해 나머지 콘텐츠를 보여준다.
-            executor.shutdown(wait=False)
-            raise TimeoutError(
-                f"음성 인식이 {STT_TIMEOUT_SECONDS}초 안에 끝나지 않아 건너뛰었습니다"
-            )
-    finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-
 def _ensure_generation_started() -> None:
     with _lock:
         if STATE["date"] == today_str() and STATE["status"] in ("processing", "ready"):
@@ -166,7 +123,6 @@ def _ensure_generation_started() -> None:
         STATE["date"] = today_str()
         STATE["status"] = "processing"
         STATE["content"] = None
-        STATE["script"] = ""
         STATE["error"] = None
     threading.Thread(target=_generate_today, daemon=True).start()
 
@@ -182,11 +138,9 @@ def index():
     if status == "ready":
         with _lock:
             content = STATE["content"]
-            script_text = STATE["script"]
         return render_template(
             "index.html",
             content=content,
-            script_text=script_text,
             translation_label=scraper.TRANSLATION_LABEL,
         )
 
@@ -230,8 +184,8 @@ def enter(token):
 @app.route("/warm")
 def warm():
     """외부 무료 스케줄러(GitHub Actions)가 매일 새벽 호출하는 예열 엔드포인트.
-    사람이 열기 전에 미리 스크래핑+STT를 시작해둔다. Basic Auth 대신
-    ?token= 쿼리로 보호한다(자동화 스크립트는 로그인 세션을 못 만드므로)."""
+    사람이 열기 전에 미리 스크래핑을 시작해둔다. Basic Auth 대신 ?token=
+    쿼리로 보호한다(자동화 스크립트는 로그인 세션을 못 만드므로)."""
     if not WARM_SECRET or request.args.get("token") != WARM_SECRET:
         return "forbidden", 403
     with _lock:
