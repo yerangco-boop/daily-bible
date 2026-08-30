@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>오늘의 말씀 · {{ content.date_str }}</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#E07A2E">
+<link rel="icon" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="매일성경">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   /* 2026-08-30: "전반적으로 너무 어둡다"는 피드백이 반복되어, 휴대폰이
@@ -44,7 +52,7 @@
     z-index:10;
   }
   .topbar .date{ font-family:'IBM Plex Mono',monospace; font-size:23px; color:var(--ocean); letter-spacing:.03em; text-align:center; }
-    .topbar h1{ font-size:20px; margin-top:6px; text-align:center; }
+  .topbar h1{ font-size:20px; margin-top:6px; text-align:center; }
   .topbar .hymn{ font-size:12px; color:var(--charcoal-soft); margin-top:4px; text-align:center; }
 
   main{ padding:20px 20px 8px; max-width:640px; margin:0 auto; }
@@ -68,7 +76,6 @@
   .note-card .intro{
     font-family:'Gowun Dodum',sans-serif; font-weight:700; font-size:15px; line-height:1.9; margin:0 0 14px;
     padding-bottom:14px; border-bottom:1px dashed var(--line); white-space:pre-wrap;
-  }
   }
   .note-card .sub{ font-size:13px; font-weight:700; margin:12px 0 6px; }
   .note-card .sub:first-of-type{ margin-top:0; }
