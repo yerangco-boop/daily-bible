@@ -15,7 +15,7 @@
   <p>status: {{ status }}</p>
   {% if content %}
     <h2>title</h2><pre>{{ content.title }}</pre>
-    <h2>verse_ref / hymn / verse_end_no</h2><pre>{{ content.verse_ref }} | {{ content.hymn }} | {{ content.verse_end_no }}</pre>
+    <h2>verse_ref / hymn / verse_start_no~verse_end_no</h2><pre>{{ content.verse_ref }} | {{ content.hymn }} | {{ content.verse_start_no }}~{{ content.verse_end_no }}</pre>
     <h2>verse_text (성경본문)</h2><pre>{{ content.verse_text }}</pre>
     <h2>verse_summary (본문 뒤 요약)</h2><pre>{{ content.verse_summary }}</pre>
     <h2>note_god (하나님은 어떤 분입니까)</h2><pre>{{ content.note_god }}</pre>
