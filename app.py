@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
+import concurrent.futures
 import datetime as dt
 from zoneinfo import ZoneInfo
 from functools import wraps
@@ -43,6 +44,11 @@ ACCESS_TOKENS = {
 }
 AUTH_COOKIE = "db_auth"
 AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 400  # 약 400일 (브라우저 쿠키 최대 수명)
+
+# Render 무료 플랜의 약한 CPU에서는 whisper 모델 준비+음성인식이 예상보다
+# 훨씬 오래 걸릴 수 있다. 이 시간을 넘기면 스크립트 없이 나머지 콘텐츠라도
+# 바로 보여준다(무한 대기 방지).
+STT_TIMEOUT_SECONDS = int(os.environ.get("STT_TIMEOUT_SECONDS", "240"))
 
 app = Flask(__name__)
 
@@ -126,7 +132,21 @@ def _download_and_transcribe(mp3_url: str) -> str:
             with open(path, "wb") as f:
                 for chunk in r.iter_content(chunk_size=1 << 16):
                     f.write(chunk)
-        return stt.transcribe_audio(path, language="ko")
+
+        # 별도 스레드에서 STT를 돌리고, 제한 시간 안에 안 끝나면 포기한다.
+        # (무료 플랜 CPU가 느려서 모델 다운로드+추론이 얼마나 걸릴지 예측이
+        # 어렵다 — 무한정 "준비 중"에 머무르는 상황을 막는 게 목적)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(stt.transcribe_audio, path, "ko")
+        try:
+            return future.result(timeout=STT_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            # 백그라운드 스레드는 계속 돌 수 있지만(강제 종료는 못 함),
+            # 여기서는 기다리지 않고 바로 실패로 처리해 나머지 콘텐츠를 보여준다.
+            executor.shutdown(wait=False)
+            raise TimeoutError(
+                f"음성 인식이 {STT_TIMEOUT_SECONDS}초 안에 끝나지 않아 건너뛰었습니다"
+            )
     finally:
         try:
             os.remove(path)
