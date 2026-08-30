@@ -100,12 +100,19 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
     content = TodayContent(date_str=target_date.isoformat(), raw_text=text)
     content.mp3_url = build_mp3_url(target_date)
 
-    _extract_title_and_ref(content, text)
+    # "찬송가 N장" 같은 문구가 페이지 앞쪽(성경 본문 쪽)에도 한 번, 제목/참조
+    # 줄에도 한 번, 이렇게 두 번 나오는 것으로 확인됐다. 그래서 이미 안정적으로
+    # 찾은 "저작권" 문구(성경 본문 바로 뒤) 이후부터만 제목/참조 줄을 찾아야
+    # 앞쪽의 것과 혼동하지 않는다.
+    copyright_idx = text.find("저작권")
+    search_from = copyright_idx if copyright_idx != -1 else 0
+
+    ref_end = _extract_title_and_ref(content, text, search_from)
     if content.verse_ref:
         content.verse_start_no = _extract_start_verse_no(content.verse_ref)
         content.verse_end_no = _extract_end_verse_no(content.verse_ref)
     _extract_scripture_verses(content, text)
-    _extract_summary(content, text)
+    _extract_summary(content, text, ref_end)
     _extract_sections(content, text)
     _extract_credits(content, text)
 
@@ -131,28 +138,32 @@ def _extract_end_verse_no(ref: str) -> str:
     return ""
 
 
-def _extract_title_and_ref(content: TodayContent, text: str) -> None:
-    """제목 / 성경구절 / 찬송가를 추출한다."""
-    m = REF_LINE_PATTERN.search(text)
+def _extract_title_and_ref(content: TodayContent, text: str, search_from: int = 0) -> int:
+    """제목 / 성경구절 / 찬송가를 추출한다.
+
+    search_from 이후에서만 찾는다(성경 본문 쪽에도 같은 문구가 있을 수 있어서).
+    반환값: 참조 줄이 끝나는 위치(요약 문단이 시작되는 지점) — 못 찾으면 -1.
+    """
+    m = REF_LINE_PATTERN.search(text, search_from)
     if m:
         content.verse_ref = m.group("ref").strip()
         content.hymn = f"찬송가 {m.group('hymn_no')}장"
 
         # 참조 줄 바로 앞의 줄들 중, 날짜/라벨처럼 보이지 않는 첫 후보를 제목으로 쓴다.
-        before = text[: m.start()]
+        before = text[search_from: m.start()]
         lines = [l.strip() for l in before.split("\n") if l.strip()]
         date_pat = re.compile(r"\d{4}[.\-]\d{2}[.\-]\d{2}")
         for cand in reversed(lines[-4:]):
             if 2 <= len(cand) <= 40 and not date_pat.search(cand) and "매일성경" not in cand:
                 content.title = cand
                 break
-        return
+        return m.end()
 
     # 폴백(참조 줄 형식이 바뀐 경우): 예전 방식으로라도 찬송가/제목을 시도한다.
-    m2 = re.search(r"찬송가\s*\d+\s*장", text)
+    m2 = re.search(r"찬송가\s*\d+\s*장", text[search_from:])
     if m2:
         content.hymn = m2.group(0)
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    lines = [l.strip() for l in text[search_from:].split("\n") if l.strip()]
     date_pat = re.compile(r"\d{4}[.\-]\d{2}[.\-]\d{2}")
     for i, line in enumerate(lines):
         if date_pat.search(line):
@@ -161,6 +172,7 @@ def _extract_title_and_ref(content: TodayContent, text: str) -> None:
                     content.title = cand
                     break
             break
+    return -1
 
 
 def _extract_scripture_verses(content: TodayContent, text: str) -> None:
@@ -207,18 +219,14 @@ def _extract_scripture_verses(content: TodayContent, text: str) -> None:
     content.verse_text = _clean("\n".join(lines))
 
 
-def _extract_summary(content: TodayContent, text: str) -> None:
-    """참조 줄 바로 뒤에 오는 짧은 요약 문단(성경 본문 자체가 아님)을 추출한다."""
-    start = -1
-    if content.hymn:
-        start = text.find(content.hymn)
-        if start != -1:
-            start += len(content.hymn)
-    if start == -1 and content.verse_ref:
-        start = text.find(content.verse_ref)
-        if start != -1:
-            start += len(content.verse_ref)
-    if start == -1:
+def _extract_summary(content: TodayContent, text: str, start: int) -> None:
+    """참조 줄 바로 뒤에 오는 짧은 요약 문단(성경 본문 자체가 아님)을 추출한다.
+
+    start는 _extract_title_and_ref가 돌려준, 참조 줄이 끝나는 위치다 — 예전에는
+    text.find(content.hymn)으로 다시 찾았는데, "찬송가 N장" 문구가 성경 본문
+    쪽에도 나올 수 있어서 엉뚱한(앞쪽) 위치를 찾는 문제가 있었다.
+    """
+    if start is None or start < 0:
         return
 
     end = len(text)
