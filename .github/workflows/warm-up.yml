@@ -1,0 +1,23 @@
+name: Warm up daily-bible
+
+on:
+  schedule:
+    - cron: '0 20 * * *'  # 매일 20:00 UTC = 05:00 KST
+  workflow_dispatch: {}
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger today's content generation
+        run: |
+          curl -s -o /dev/null -w "warm status: %{http_code}\n" \
+            "https://daily-bible-dx5i.onrender.com/warm?token=${{ secrets.WARM_SECRET }}"
+
+      - name: Keep the server awake while it processes
+        run: |
+          for i in $(seq 1 9); do
+            sleep 120
+            curl -s -o /dev/null -w "healthz check $i: %{http_code}\n" \
+              https://daily-bible-dx5i.onrender.com/healthz
+          done
