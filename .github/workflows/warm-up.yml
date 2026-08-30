@@ -9,15 +9,16 @@ jobs:
   warm:
     runs-on: ubuntu-latest
     steps:
+      # STT를 없앤 뒤로는 스크래핑만 하면 되므로 몇 초 안에 끝난다.
+      # 두 번 정도 확인하는 정도로 충분하다(Render 무료 플랜이 막 깨어난
+      # 경우를 위한 여유).
       - name: Trigger today's content generation
         run: |
           curl -s -o /dev/null -w "warm status: %{http_code}\n" \
             "https://daily-bible-dx5i.onrender.com/warm?token=${{ secrets.WARM_SECRET }}"
 
-      - name: Keep the server awake while it processes
+      - name: Confirm it finished
         run: |
-          for i in $(seq 1 9); do
-            sleep 120
-            curl -s -o /dev/null -w "healthz check $i: %{http_code}\n" \
-              https://daily-bible-dx5i.onrender.com/healthz
-          done
+          sleep 30
+          curl -s -o /dev/null -w "healthz check: %{http_code}\n" \
+            https://daily-bible-dx5i.onrender.com/healthz
