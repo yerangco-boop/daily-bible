@@ -46,7 +46,9 @@ class TodayContent:
     title: str = ""
     hymn: str = ""
     verse_ref: str = ""
-    verse_text: str = ""     # 개역개정 본문
+    verse_end_no: str = ""   # 참조의 마지막 절 번호 (예: "22") — 본문/요약 분리에 사용
+    verse_text: str = ""     # 개역개정 본문 (절 번호가 있는 실제 성경 본문)
+    verse_summary: str = ""  # 본문 뒤에 붙는 짧은 요약 문단(성경 본문이 아님)
     note_god: str = ""       # 하나님은 어떤 분입니까
     note_lesson: str = ""    # 내게 주시는 교훈은 무엇입니까
     prayer: str = ""
@@ -84,11 +86,26 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
     content.mp3_url = build_mp3_url(target_date)
 
     _extract_title_and_ref(content, text)
+    if content.verse_ref:
+        content.verse_end_no = _extract_end_verse_no(content.verse_ref)
     _extract_verse_text(content, text)
+    _split_scripture_and_summary(content)
     _extract_sections(content, text)
     _extract_credits(content, text)
 
     return content
+
+
+def _extract_end_verse_no(ref: str) -> str:
+    """참조 문자열에서 마지막 절 번호를 뽑아낸다.
+    예: '이사야(Isaiah) 38:1 ~ 38:22' → '22'"""
+    nums = re.findall(r"(\d+):(\d+)", ref)
+    if nums:
+        return nums[-1][1]
+    m = re.search(r"~\s*(\d+)\s*$", ref.strip())
+    if m:
+        return m.group(1)
+    return ""
 
 
 def _extract_title_and_ref(content: TodayContent, text: str) -> None:
@@ -159,6 +176,28 @@ def _extract_verse_text(content: TodayContent, text: str) -> None:
     content.verse_text = _clean("\n".join(lines))
 
 
+def _split_scripture_and_summary(content: TodayContent) -> None:
+    """성경 본문(절 번호가 있는 실제 본문)과 그 뒤에 붙는 짧은 요약 문단을 나눈다.
+
+    참조 줄에서 이미 확인한 마지막 절 번호(예: "22")로 시작하는 줄을 본문의
+    마지막 줄로 보고, 그 다음부터를 요약으로 분리한다. 해당 줄을 찾지 못하면
+    (형식이 예상과 다른 날) 안전하게 전부 본문으로 남겨둔다 — 요약 문단이
+    섞여 있더라도 최소한 폰트만 같아질 뿐, 내용이 사라지지는 않는다.
+    """
+    if not content.verse_text or not content.verse_end_no:
+        return
+    lines = content.verse_text.split("\n")
+    pat = re.compile(rf"^{re.escape(content.verse_end_no)}(?!\d)")
+    split_idx = -1
+    for i, line in enumerate(lines):
+        if pat.match(line.strip()):
+            split_idx = i
+    if split_idx == -1 or split_idx >= len(lines) - 1:
+        return
+    content.verse_text = "\n".join(lines[: split_idx + 1]).strip()
+    content.verse_summary = "\n".join(lines[split_idx + 1 :]).strip()
+
+
 def _extract_sections(content: TodayContent, text: str) -> None:
     idx_god = text.find(ANCHOR_GOD)
     idx_lesson = text.find(ANCHOR_LESSON)
@@ -169,19 +208,35 @@ def _extract_sections(content: TodayContent, text: str) -> None:
         content.note_god = _clean(text[idx_god + len(ANCHOR_GOD) : idx_god + len(ANCHOR_GOD) + 800])
 
     if idx_lesson != -1:
-        # 기도문 시작 지점을 찾아 그 앞까지를 교훈 섹션으로 자른다
-        end = len(text)
-        for hint in ANCHOR_PRAYER_HINTS:
-            i = text.find(hint, idx_lesson)
-            if i != -1:
-                end = min(end, i)
-        content.note_lesson = _clean(text[idx_lesson + len(ANCHOR_LESSON) : end])
+        lesson_body_start = idx_lesson + len(ANCHOR_LESSON)
 
-        # 기도문: "교훈" 섹션 끝부터 저작권 문구 전까지
-        prayer_start = end
-        copyright_idx = text.find("저작권", prayer_start)
-        prayer_end = copyright_idx if copyright_idx != -1 else min(len(text), prayer_start + 600)
-        content.prayer = _clean(text[prayer_start:prayer_end])
+        # 교훈 섹션이 끝나고 기도문이 시작하는 지점("기도" 계열 문구)을 찾는다.
+        prayer_hint_start = -1
+        prayer_hint_len = 0
+        for hint in ANCHOR_PRAYER_HINTS:
+            i = text.find(hint, lesson_body_start)
+            if i != -1 and (prayer_hint_start == -1 or i < prayer_hint_start):
+                prayer_hint_start = i
+                prayer_hint_len = len(hint)
+
+        lesson_end = prayer_hint_start if prayer_hint_start != -1 else len(text)
+        content.note_lesson = _clean(text[lesson_body_start:lesson_end])
+
+        if prayer_hint_start != -1:
+            # "기도"/"열방을 위한 기도" 라는 라벨 자체는 기도문 내용이 아니므로
+            # 그 뒤부터 시작한다(예전 버전은 라벨을 포함해 잘라내는 버그가 있었음).
+            prayer_start = prayer_hint_start + prayer_hint_len
+
+            # 기도문 끝 지점: 저작권 문구나 오디오해설 크레딧 섹션이 시작되기
+            # 전까지. 앵커 하나만 쓰면 실제 페이지에 없을 때 엉뚱한 뒷부분
+            # (오디오해설 크레딧 등)까지 딸려 들어오는 문제가 있었다.
+            end_candidates = []
+            for stop in ("저작권", "오디오해설", "본문낭독"):
+                i = text.find(stop, prayer_start)
+                if i != -1:
+                    end_candidates.append(i)
+            prayer_end = min(end_candidates) if end_candidates else min(len(text), prayer_start + 600)
+            content.prayer = _clean(text[prayer_start:prayer_end])
 
 
 def _extract_credits(content: TodayContent, text: str) -> None:
@@ -209,8 +264,9 @@ if __name__ == "__main__":
     print("date:", c.date_str)
     print("title:", c.title)
     print("hymn:", c.hymn)
-    print("verse_ref:", c.verse_ref)
+    print("verse_ref:", c.verse_ref, "/ end_no:", c.verse_end_no)
     print("verse_text:", c.verse_text[:200])
+    print("verse_summary:", c.verse_summary[:200])
     print("mp3:", c.mp3_url)
     print("note_god:", c.note_god[:200])
     print("note_lesson:", c.note_lesson[:200])
