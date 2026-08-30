@@ -7,34 +7,22 @@
 <title>오늘의 말씀 · {{ content.date_str }}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
+  /* 2026-08-30: "전반적으로 너무 어둡다"는 피드백이 반복되어, 휴대폰이
+     다크 모드여도 이 페이지는 항상 밝은 톤을 쓰도록 다크 모드 자체를
+     없앴다(@media prefers-color-scheme 미사용). 글자색도 밝은 배경 위에서
+     대비가 뚜렷한 진한 색으로 고정된다. */
   :root{
-    --charcoal:#2E2B27;
-    --charcoal-soft:#5A5548;
-    --paper:#F8F6F0;
+    --charcoal:#26221D;
+    --charcoal-soft:#655E4F;
+    --paper:#FFFDF9;
     --surface:#FFFFFF;
-    --mist:#8CA593;
-    --mist-soft:#E4EBE2;
+    --mist:#7FA089;
+    --mist-soft:#EAF1E7;
     --tangerine:#E07A2E;
     --tangerine-deep:#B85F1E;
-    --ocean:#4E7386;
-    --ocean-soft:#E1EAEE;
-    --line:#DDD6C7;
-  }
-  /* 어두운 모드도 완전한 검정에 가깝지 않고 밝은 편의 다크 톤을 쓴다 (2026-08-30: 너무 어둡다는 피드백 반영) */
-  @media (prefers-color-scheme: dark){
-    :root{
-      --charcoal:#F2EEE5;
-      --charcoal-soft:#D3CCBE;
-      --paper:#332F28;
-      --surface:#403B32;
-      --mist:#9FC0A8;
-      --mist-soft:rgba(159,192,168,0.20);
-      --tangerine:#F0964C;
-      --tangerine-deep:#F5AE72;
-      --ocean:#8CB3C6;
-      --ocean-soft:rgba(140,179,198,0.18);
-      --line:#544E42;
-    }
+    --ocean:#3E6178;
+    --ocean-soft:#E7F0F4;
+    --line:#E7E1D3;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0; height:100%;}
@@ -71,17 +59,16 @@
   .card .h{ font-size:11px; color:var(--ocean); text-transform:uppercase; letter-spacing:.05em; margin-bottom:10px; font-family:'IBM Plex Mono',monospace; }
   .verse-card .ref-line{ font-family:'Gowun Batang',serif; font-size:16.5px; font-weight:700; line-height:1.6; margin:0 0 10px; color:var(--tangerine-deep); }
   .verse-card p{ font-family:'Gowun Batang',serif; font-size:16.5px; line-height:2; margin:0; white-space:pre-wrap; }
-  .verse-card .summary-note{
-    font-family:'Gowun Dodum',sans-serif; font-size:11px; line-height:1.7;
-    color:var(--charcoal-soft); white-space:pre-wrap; margin:14px 0 0;
-    padding-top:12px; border-top:1px dashed var(--line);
-  }
   .verse-card .src{
     display:block; text-align:right; margin-top:14px;
     font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--charcoal-soft);
   }
 
   .note-card{ background:var(--mist-soft); border:none; }
+  .note-card .intro{
+    font-family:'Gowun Batang',serif; font-size:16.5px; line-height:2; margin:0 0 14px;
+    padding-bottom:14px; border-bottom:1px dashed var(--line); white-space:pre-wrap;
+  }
   .note-card .sub{ font-size:13px; font-weight:700; margin:12px 0 6px; }
   .note-card .sub:first-of-type{ margin-top:0; }
   .note-card p{ font-family:'Gowun Batang',serif; font-size:16.5px; line-height:2; margin:0; white-space:pre-wrap; }
@@ -137,7 +124,6 @@
       {% if content.verse_text %}
         {% if content.verse_ref %}<div class="ref-line">{{ content.verse_ref }}</div>{% endif %}
         <p>{{ content.verse_text }}</p>
-        {% if content.verse_summary %}<p class="summary-note">{{ content.verse_summary }}</p>{% endif %}
         <span class="src">— {{ translation_label }}</span>
       {% else %}
         <p style="color:var(--charcoal-soft); font-family:'Gowun Dodum',sans-serif; font-size:14px;">
@@ -148,6 +134,7 @@
 
     <section class="card note-card">
       <div class="h">해설</div>
+      {% if content.verse_summary %}<p class="intro">{{ content.verse_summary }}</p>{% endif %}
       <div class="sub">하나님은 어떤 분입니까</div>
       <p>{{ content.note_god or "추출 실패 — 원본 페이지 확인 필요" }}</p>
       <div class="sub">내게 주시는 교훈은 무엇입니까</div>
