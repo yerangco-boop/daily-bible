@@ -18,15 +18,31 @@ from zoneinfo import ZoneInfo
 from functools import wraps
 
 import requests
-from flask import Flask, render_template, jsonify, request, Response
+from flask import Flask, render_template, jsonify, request, Response, redirect, url_for, make_response
 
 import scraper
 import stt
 
 KST = ZoneInfo("Asia/Seoul")
 
-APP_USER = os.environ.get("APP_USER", "jeongpyo")
-APP_PASSWORD = os.environ.get("APP_PASSWORD")  # 반드시 Render 환경변수로 설정할 것
+# 두 분이 서로 다른 아이디를 쓸 수 있도록 최대 2쌍까지 지원한다.
+# (APP_USER/APP_PASSWORD, APP_USER2/APP_PASSWORD2 — Render 환경변수로 설정)
+# 수동으로 아이디/비번을 입력하는 경우(Basic Auth)를 위한 것.
+_pairs = [
+    (os.environ.get("APP_USER", ""), os.environ.get("APP_PASSWORD", "")),
+    (os.environ.get("APP_USER2", ""), os.environ.get("APP_PASSWORD2", "")),
+]
+VALID_CREDENTIALS = {u: p for u, p in _pairs if u and p}
+
+# QR코드/바로가기 링크로 "자동 로그인"하기 위한 토큰.
+# 자격증명을 URL에 그대로 넣지 않고(user:pass@ 형식은 일부 QR스캐너/브라우저가
+# 인식하지 못함), 깨끗한 URL(/enter/<토큰>)을 한 번 열면 쿠키를 심어 이후
+# 자동으로 로그인 상태를 유지한다. (APP_TOKEN, APP_TOKEN2 — Render 환경변수)
+ACCESS_TOKENS = {
+    t: True for t in [os.environ.get("APP_TOKEN", ""), os.environ.get("APP_TOKEN2", "")] if t
+}
+AUTH_COOKIE = "db_auth"
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 400  # 약 400일 (브라우저 쿠키 최대 수명)
 
 app = Flask(__name__)
 
@@ -47,10 +63,10 @@ def today_str() -> str:
 
 # ---------------------------------------------------------------- Basic Auth
 def check_auth(username: str, password: str) -> bool:
-    if not APP_PASSWORD:
-        # 비밀번호가 설정되지 않은 상태로 배포되는 사고를 막는다.
+    if not VALID_CREDENTIALS:
+        # 아이디/비밀번호가 하나도 설정되지 않은 상태로 배포되는 사고를 막는다.
         return False
-    return username == APP_USER and password == APP_PASSWORD
+    return VALID_CREDENTIALS.get(username) == password
 
 
 def authenticate() -> Response:
@@ -63,10 +79,15 @@ def authenticate() -> Response:
 def requires_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
+        # 1) QR/바로가기 링크로 심어둔 쿠키가 있으면 그걸로 통과시킨다.
+        cookie_token = request.cookies.get(AUTH_COOKIE)
+        if cookie_token and cookie_token in ACCESS_TOKENS:
+            return f(*args, **kwargs)
+        # 2) 없으면 기존 방식대로 아이디/비번 직접 입력(Basic Auth)도 허용한다.
         auth = request.authorization
-        if not auth or not check_auth(auth.username, auth.password):
-            return authenticate()
-        return f(*args, **kwargs)
+        if auth and check_auth(auth.username, auth.password):
+            return f(*args, **kwargs)
+        return authenticate()
     return wrapper
 
 
@@ -162,6 +183,23 @@ def status():
             "ready": is_today and STATE["status"] == "ready",
             "status": STATE["status"] if is_today else "idle",
         })
+
+
+@app.route("/enter/<token>")
+def enter(token):
+    """QR/바로가기 링크 전용 진입점. 유효한 토큰이면 쿠키를 심고 홈으로 보낸다."""
+    if token not in ACCESS_TOKENS:
+        return "유효하지 않은 링크입니다.", 404
+    resp = make_response(redirect(url_for("index")))
+    resp.set_cookie(
+        AUTH_COOKIE,
+        token,
+        max_age=AUTH_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="Lax",
+        secure=True,
+    )
+    return resp
 
 
 @app.route("/healthz")
