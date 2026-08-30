@@ -3,10 +3,16 @@ sum.su.or.kr(성서유니온 매일성경)의 오늘자 페이지를 가져와
 성경본문 / 해설 / 기도문 / 오디오 URL을 추출한다.
 
 주의(중요): 이 파서는 실제 페이지의 HTML class/id 구조를 직접 보고 만든 것이
-아니라, 페이지 텍스트에 등장하는 고정 문구("하나님은 어떤 분입니까" 등)를
-기준으로 앞뒤를 잘라내는 "텍스트 앵커" 방식이다. 원본 사이트의 문구가 바뀌면
-파싱이 깨질 수 있으니, 배포 후 실제 결과를 한 번 확인하고 필요하면
-_split_sections()의 앵커 문자열을 조정할 것.
+아니라, 페이지 텍스트에 등장하는 고정 문구를 기준으로 앞뒤를 잘라내는
+"텍스트 앵커" 방식이다. 원본 사이트의 문구가 바뀌면 파싱이 깨질 수 있다.
+
+2026-08-30(2차) 확인: 정표님이 보내주신 /debug 원문 캡처로 실제 DOM 텍스트
+순서가 화면에 보이는 순서와 다르다는 걸 확인했다 — 절 번호가 붙은 진짜
+성경 본문(1절~마지막 절)이 제목/참조/요약보다 먼저 나오고, 그 바로 뒤에
+번역본 저작권 문구가 붙는다. 그 다음에야 오디오해설 크레딧, 날짜, 제목,
+참조 줄, 짧은 요약 문단, "— 개역개정", 해설, 기도문이 순서대로 이어진다.
+그래서 성경 본문은 "저작권" 문구를 기준으로 거꾸로 절 번호를 찾아 추출하고,
+짧은 요약 문단은 기존처럼 참조 줄 뒤에서 추출한다.
 """
 from __future__ import annotations
 
@@ -27,17 +33,25 @@ TRANSLATION_LABEL = "개역개정"
 # 탭 이름이 한 줄로 섞여 나오면 건너뛰기 위한 참고용 목록(추출 대상 아님).
 _OTHER_TRANSLATION_NAMES = ["개역한글", "쉬운성경", "새번역", "ESV"]
 
-# 해설/기도문/본문을 잘라내는 기준이 되는 고정 문구들.
 # 2026-08-30 실제 화면 캡처로 확인한 정확한 형식: "본문: 이사야(Isaiah)
-# 38:1 ~ 38:22 찬송가 363장" — 책이름과 절 사이에 영문 표기가 괄호로 끼어
-# 있어서, 예전의 단순 정규식(책이름 바로 뒤에 숫자)은 매번 실패했었다.
+# 38:1 - 38:22 찬송가 363장" (책이름과 절 사이에 영문 표기가 괄호로 낀다.
+# 절 구분 기호는 "~"인 날도 있고 "-"인 날도 있어서 문자 종류는 신경 쓰지 않는다)
 REF_LINE_PATTERN = re.compile(
     r"본문\s*[:：]\s*(?P<ref>.+?)\s*찬송가\s*(?P<hymn_no>\d+)\s*장"
 )
 ANCHOR_SUMMARY = "본문요약"
 ANCHOR_GOD = "하나님은 어떤 분입니까"
 ANCHOR_LESSON = "내게 주시는 교훈은 무엇입니까"
-ANCHOR_PRAYER_HINTS = ["기도", "열방을 위한 기도"]
+
+# "기도"라는 단어는 해설 문장 속에도 자연스럽게 자주 등장한다
+# (예: "...얼굴을 벽으로 향하고 기도합니다."). 그래서 문단 속에 섞인 단어가
+# 아니라, 그 줄에 "기도"라는 글자만 단독으로 있는 경우(실제 소제목)만
+# 기도문의 시작으로 인정한다 — 예전 버전은 문장 속 "기도"에 걸려 해설
+# 뒷부분을 통째로 기도문으로 잘못 삼키는 버그가 있었다.
+PRAYER_HEADING_PATTERNS = [
+    re.compile(r"^\s*기도\s*$", re.MULTILINE),
+    re.compile(r"^\s*열방을 위한 기도\s*$", re.MULTILINE),
+]
 
 
 @dataclass
@@ -46,16 +60,17 @@ class TodayContent:
     title: str = ""
     hymn: str = ""
     verse_ref: str = ""
-    verse_end_no: str = ""   # 참조의 마지막 절 번호 (예: "22") — 본문/요약 분리에 사용
-    verse_text: str = ""     # 개역개정 본문 (절 번호가 있는 실제 성경 본문)
-    verse_summary: str = ""  # 본문 뒤에 붙는 짧은 요약 문단(성경 본문이 아님)
-    note_god: str = ""       # 하나님은 어떤 분입니까
-    note_lesson: str = ""    # 내게 주시는 교훈은 무엇입니까
+    verse_start_no: str = ""  # 참조의 시작 절 번호 (예: "1")
+    verse_end_no: str = ""    # 참조의 마지막 절 번호 (예: "22")
+    verse_text: str = ""      # 개역개정 본문 (절 번호가 있는 실제 성경 본문)
+    verse_summary: str = ""   # 참조 줄 뒤에 붙는 짧은 요약 문단(성경 본문이 아님)
+    note_god: str = ""        # 하나님은 어떤 분입니까
+    note_lesson: str = ""     # 내게 주시는 교훈은 무엇입니까
     prayer: str = ""
     mp3_url: str = ""
     reader_credit: str = ""
     commentator_credit: str = ""
-    raw_text: str = ""       # 디버깅용 원문 전체 텍스트
+    raw_text: str = ""        # 디버깅용 원문 전체 텍스트
 
 
 def build_mp3_url(target_date: dt.date) -> str:
@@ -87,33 +102,37 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
 
     _extract_title_and_ref(content, text)
     if content.verse_ref:
+        content.verse_start_no = _extract_start_verse_no(content.verse_ref)
         content.verse_end_no = _extract_end_verse_no(content.verse_ref)
-    _extract_verse_text(content, text)
-    _split_scripture_and_summary(content)
+    _extract_scripture_verses(content, text)
+    _extract_summary(content, text)
     _extract_sections(content, text)
     _extract_credits(content, text)
 
     return content
 
 
+def _extract_start_verse_no(ref: str) -> str:
+    """참조 문자열에서 시작 절 번호를 뽑아낸다.
+    예: '이사야(Isaiah) 38:1 - 38:22' → '1'"""
+    nums = re.findall(r"(\d+):(\d+)", ref)
+    return nums[0][1] if nums else ""
+
+
 def _extract_end_verse_no(ref: str) -> str:
     """참조 문자열에서 마지막 절 번호를 뽑아낸다.
-    예: '이사야(Isaiah) 38:1 ~ 38:22' → '22'"""
+    예: '이사야(Isaiah) 38:1 - 38:22' → '22'"""
     nums = re.findall(r"(\d+):(\d+)", ref)
     if nums:
         return nums[-1][1]
-    m = re.search(r"~\s*(\d+)\s*$", ref.strip())
+    m = re.search(r"[~-]\s*(\d+)\s*$", ref.strip())
     if m:
         return m.group(1)
     return ""
 
 
 def _extract_title_and_ref(content: TodayContent, text: str) -> None:
-    """제목 / 성경구절 / 찬송가를 추출한다.
-
-    2026-08-30 실제 화면 캡처로 확인한 순서: 제목 줄 바로 다음에
-    "본문: 이사야(Isaiah) 38:1 ~ 38:22 찬송가 363장" 형식의 줄이 온다.
-    """
+    """제목 / 성경구절 / 찬송가를 추출한다."""
     m = REF_LINE_PATTERN.search(text)
     if m:
         content.verse_ref = m.group("ref").strip()
@@ -144,13 +163,52 @@ def _extract_title_and_ref(content: TodayContent, text: str) -> None:
             break
 
 
-def _extract_verse_text(content: TodayContent, text: str) -> None:
-    """개역개정 본문만 추출한다.
+def _extract_scripture_verses(content: TodayContent, text: str) -> None:
+    """실제 절 번호가 붙은 성경 본문(개역개정)을 추출한다.
 
-    기준: 찬송가 표기(또는 절 참조) 다음부터, "본문요약" 또는 해설 시작
-    문구 이전까지를 본문으로 간주한다. 그 사이에 다른 번역본 이름이 한 줄로만
-    있으면(탭 라벨) 건너뛴다.
+    2026-08-30 실제 원문(raw_text) 확인 결과, 이 본문은 제목/참조/요약보다
+    먼저 나오고 바로 뒤에 번역본 저작권 문구("...의 저작권은...")가 붙는다.
+    그래서 참조 줄이 아니라 "저작권"이라는 단어의 첫 등장 위치를 기준으로
+    거꾸로 절 번호 줄(끝 절 → 시작 절)을 찾아 그 구간을 본문으로 잡는다.
+
+    한계: 시작 절과 끝 절 번호가 같은 날(단일 절만 읽는 날)이나, 장이 바뀌는
+    구간(예: 37:38 ~ 38:8)은 지금 방식으로 정확히 못 잡을 수 있다 — 이런
+    경우 "성경본문" 카드에 "자동 추출 실패" 문구가 뜨는데, 실제로 그렇게
+    나오면 알려주시면 그때 더 다듬으면 된다.
     """
+    start_no = content.verse_start_no
+    end_no = content.verse_end_no
+    if not start_no or not end_no:
+        return
+
+    copyright_idx = text.find("저작권")
+    if copyright_idx == -1:
+        return
+    scripture_end = text.rfind("\n", 0, copyright_idx)
+    if scripture_end == -1:
+        scripture_end = copyright_idx
+
+    end_pat = re.compile(rf"^{re.escape(end_no)}$", re.MULTILINE)
+    end_match = None
+    for m in end_pat.finditer(text, 0, scripture_end):
+        end_match = m  # 저작권 앞에서 가장 마지막에 나오는 절 번호 줄을 쓴다
+    if not end_match:
+        return
+
+    start_pat = re.compile(rf"^{re.escape(start_no)}$", re.MULTILINE)
+    start_match = None
+    for m in start_pat.finditer(text, 0, end_match.start()):
+        start_match = m  # 끝 절 번호 줄 바로 앞에서 가장 가까운 시작 절 번호 줄
+    if not start_match:
+        return
+
+    chunk = text[start_match.start():scripture_end]
+    lines = [l.strip() for l in chunk.split("\n") if l.strip()]
+    content.verse_text = _clean("\n".join(lines))
+
+
+def _extract_summary(content: TodayContent, text: str) -> None:
+    """참조 줄 바로 뒤에 오는 짧은 요약 문단(성경 본문 자체가 아님)을 추출한다."""
     start = -1
     if content.hymn:
         start = text.find(content.hymn)
@@ -164,38 +222,19 @@ def _extract_verse_text(content: TodayContent, text: str) -> None:
         return
 
     end = len(text)
-    for anchor in (ANCHOR_SUMMARY, ANCHOR_GOD):
+    for anchor in (ANCHOR_SUMMARY, ANCHOR_GOD, "해설", TRANSLATION_LABEL):
         i = text.find(anchor, start)
         if i != -1:
             end = min(end, i)
 
     chunk = text[start:end]
     lines = [l.strip() for l in chunk.split("\n") if l.strip()]
-    # 번역본 탭 이름만 있는 줄은 제외
-    lines = [l for l in lines if l not in _OTHER_TRANSLATION_NAMES and l != TRANSLATION_LABEL]
-    content.verse_text = _clean("\n".join(lines))
-
-
-def _split_scripture_and_summary(content: TodayContent) -> None:
-    """성경 본문(절 번호가 있는 실제 본문)과 그 뒤에 붙는 짧은 요약 문단을 나눈다.
-
-    참조 줄에서 이미 확인한 마지막 절 번호(예: "22")로 시작하는 줄을 본문의
-    마지막 줄로 보고, 그 다음부터를 요약으로 분리한다. 해당 줄을 찾지 못하면
-    (형식이 예상과 다른 날) 안전하게 전부 본문으로 남겨둔다 — 요약 문단이
-    섞여 있더라도 최소한 폰트만 같아질 뿐, 내용이 사라지지는 않는다.
-    """
-    if not content.verse_text or not content.verse_end_no:
-        return
-    lines = content.verse_text.split("\n")
-    pat = re.compile(rf"^{re.escape(content.verse_end_no)}(?!\d)")
-    split_idx = -1
-    for i, line in enumerate(lines):
-        if pat.match(line.strip()):
-            split_idx = i
-    if split_idx == -1 or split_idx >= len(lines) - 1:
-        return
-    content.verse_text = "\n".join(lines[: split_idx + 1]).strip()
-    content.verse_summary = "\n".join(lines[split_idx + 1 :]).strip()
+    # 번역본 탭 이름이나 "— 개역개정" 같은 출처 표기는 요약 문단이 아니므로 제외
+    lines = [
+        l for l in lines
+        if l not in _OTHER_TRANSLATION_NAMES and l != TRANSLATION_LABEL and not l.startswith("—")
+    ]
+    content.verse_summary = _clean("\n".join(lines))
 
 
 def _extract_sections(content: TodayContent, text: str) -> None:
@@ -203,35 +242,35 @@ def _extract_sections(content: TodayContent, text: str) -> None:
     idx_lesson = text.find(ANCHOR_LESSON)
 
     if idx_god != -1 and idx_lesson != -1:
-        content.note_god = _clean(text[idx_god + len(ANCHOR_GOD) : idx_lesson])
+        content.note_god = _strip_leading_qmark(_clean(text[idx_god + len(ANCHOR_GOD) : idx_lesson]))
     elif idx_god != -1:
-        content.note_god = _clean(text[idx_god + len(ANCHOR_GOD) : idx_god + len(ANCHOR_GOD) + 800])
+        content.note_god = _strip_leading_qmark(
+            _clean(text[idx_god + len(ANCHOR_GOD) : idx_god + len(ANCHOR_GOD) + 800])
+        )
 
     if idx_lesson != -1:
         lesson_body_start = idx_lesson + len(ANCHOR_LESSON)
 
-        # 교훈 섹션이 끝나고 기도문이 시작하는 지점("기도" 계열 문구)을 찾는다.
+        # 교훈 섹션이 끝나고 기도문이 시작하는 지점("기도" 단독 줄)을 찾는다.
         prayer_hint_start = -1
         prayer_hint_len = 0
-        for hint in ANCHOR_PRAYER_HINTS:
-            i = text.find(hint, lesson_body_start)
-            if i != -1 and (prayer_hint_start == -1 or i < prayer_hint_start):
-                prayer_hint_start = i
-                prayer_hint_len = len(hint)
+        for pat in PRAYER_HEADING_PATTERNS:
+            m = pat.search(text, lesson_body_start)
+            if m and (prayer_hint_start == -1 or m.start() < prayer_hint_start):
+                prayer_hint_start = m.start()
+                prayer_hint_len = len(m.group(0))
 
         lesson_end = prayer_hint_start if prayer_hint_start != -1 else len(text)
-        content.note_lesson = _clean(text[lesson_body_start:lesson_end])
+        content.note_lesson = _strip_leading_qmark(_clean(text[lesson_body_start:lesson_end]))
 
         if prayer_hint_start != -1:
-            # "기도"/"열방을 위한 기도" 라는 라벨 자체는 기도문 내용이 아니므로
-            # 그 뒤부터 시작한다(예전 버전은 라벨을 포함해 잘라내는 버그가 있었음).
+            # "기도" 라벨 자체는 기도문 내용이 아니므로 그 뒤부터 시작한다.
             prayer_start = prayer_hint_start + prayer_hint_len
 
-            # 기도문 끝 지점: 저작권 문구나 오디오해설 크레딧 섹션이 시작되기
-            # 전까지. 앵커 하나만 쓰면 실제 페이지에 없을 때 엉뚱한 뒷부분
-            # (오디오해설 크레딧 등)까지 딸려 들어오는 문제가 있었다.
+            # 기도문 끝 지점: 저작권 문구, 오디오해설 크레딧, 페이지 하단의
+            # "매일성경 해설의 저작권은..." 문구가 시작되기 전까지.
             end_candidates = []
-            for stop in ("저작권", "오디오해설", "본문낭독"):
+            for stop in ("저작권", "오디오해설", "본문낭독", "매일성경"):
                 i = text.find(stop, prayer_start)
                 if i != -1:
                     end_candidates.append(i)
@@ -240,10 +279,9 @@ def _extract_sections(content: TodayContent, text: str) -> None:
 
 
 def _extract_credits(content: TodayContent, text: str) -> None:
-    # 실제 형식: "본문낭독:지음원(ERICA 한양대학교회) l 오디오해설:임수아(광주지부 총무)"
-    # 두 이름 사이 구분자가 정확히 어떤 문자인지 화면 캡처만으로는 확신할 수
-    # 없어서("l"처럼 보이는 세로줄 등), "오디오해설"이라는 단어 자체를 경계로
-    # 삼아 구분자가 무엇이든 상관없이 잘라낸다.
+    # 실제 형식: "본문낭독:지음원(ERICA 한양대학교회)|오디오해설: 임하수(광주지부 총무)"
+    # 두 이름 사이 구분자가 어떤 문자든 상관없이 "오디오해설"이라는 단어
+    # 자체를 경계로 삼아 잘라낸다.
     m = re.search(r"본문낭독\s*[:：]\s*(.+?)\s*오디오해설\s*[:：]\s*([^\n]{2,40})", text)
     if m:
         content.reader_credit = m.group(1).strip(" |｜lL·-")
@@ -252,6 +290,14 @@ def _extract_credits(content: TodayContent, text: str) -> None:
     m = re.search(r"오디오해설\s*[:：]?\s*([^\n|]{2,30})", text)
     if m:
         content.commentator_credit = m.group(1).strip()
+
+
+def _strip_leading_qmark(s: str) -> str:
+    """소제목과 본문 사이에 "?"만 단독으로 있는 줄이 낄 때가 있어 제거한다."""
+    lines = s.split("\n")
+    if lines and lines[0].strip() in ("?", "？"):
+        lines = lines[1:]
+    return "\n".join(lines).strip()
 
 
 def _clean(s: str) -> str:
@@ -264,8 +310,8 @@ if __name__ == "__main__":
     print("date:", c.date_str)
     print("title:", c.title)
     print("hymn:", c.hymn)
-    print("verse_ref:", c.verse_ref, "/ end_no:", c.verse_end_no)
-    print("verse_text:", c.verse_text[:200])
+    print("verse_ref:", c.verse_ref, "/", c.verse_start_no, "~", c.verse_end_no)
+    print("verse_text:", c.verse_text[:300])
     print("verse_summary:", c.verse_summary[:200])
     print("mp3:", c.mp3_url)
     print("note_god:", c.note_god[:200])
