@@ -103,7 +103,7 @@ def _generate_today() -> None:
     끝난다(예전 STT 단계가 없어졌다)."""
     date_str = today_str()
     try:
-        content = scraper.fetch_today()
+        content = scraper.fetch_today(target_date=dt.date.fromisoformat(date_str))
         with _lock:
             STATE["date"] = date_str
             STATE["content"] = content
