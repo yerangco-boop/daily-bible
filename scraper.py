@@ -19,9 +19,17 @@ from __future__ import annotations
 import re
 import datetime as dt
 from dataclasses import dataclass, field
+from zoneinfo import ZoneInfo
 
 import requests
 from bs4 import BeautifulSoup
+
+# 2026-09-02 수정: Render 서버는 UTC로 돌아가는데 dt.date.today()를 그대로 쓰면
+# 한국시간 자정~오전9시 사이엔 서버 UTC 날짜가 아직 "어제"라서, 실제로는 이미
+# 갱신된(한국시간 기준 오늘자) 사이트 내용을 긁어오고도 날짜 라벨만 하루 전으로
+# 잘못 찍히는 버그가 있었다(정표님이 9/2에 접속했는데 화면엔 9/1로 나온 사고).
+# 그래서 기본값도 반드시 한국시간(KST) 기준으로 계산한다.
+KST = ZoneInfo("Asia/Seoul")
 
 BASE_URL = "https://sum.su.or.kr:8888/bible/today"
 MP3_URL_TMPL = "https://mp3.dailybible.or.kr/kor/{year}/{ymd}.mp3"
@@ -42,6 +50,14 @@ REF_LINE_PATTERN = re.compile(
 ANCHOR_SUMMARY = "본문요약"
 ANCHOR_GOD = "하나님은 어떤 분입니까"
 ANCHOR_LESSON = "내게 주시는 교훈은 무엇입니까"
+
+# 2026-09-02 추가(정표님 제안): 날짜를 서버 시계로 "계산"하지 않고, 사이트
+# 화면에 실제로 찍혀 있는 날짜("2026.09.02" 형식, 참조 줄 앞쪽에 등장)를
+# 성경본문처럼 그대로 긁어온다. 계산이 아니라 원본 값을 그대로 읽는 방식이라
+# 서버 시간대 설정에 문제가 생기더라도 화면 날짜와 본문 내용이 항상 정확히
+# 일치한다. 혹시 사이트 형식이 바뀌어 못 찾으면(page_date가 None이면)
+# fetch_today()에서 한국시간(KST) 계산값으로 안전하게 폴백한다.
+PAGE_DATE_PATTERN = re.compile(r"(?P<y>\d{4})[.\-](?P<m>\d{2})[.\-](?P<d>\d{2})")
 
 # "기도"라는 단어는 해설 문장 속에도 자연스럽게 자주 등장한다
 # (예: "...얼굴을 벽으로 향하고 기도합니다."). 그래서 문단 속에 섞인 단어가
@@ -77,6 +93,23 @@ def build_mp3_url(target_date: dt.date) -> str:
     return MP3_URL_TMPL.format(year=target_date.year, ymd=target_date.strftime("%Y%m%d"))
 
 
+def _extract_page_date(text: str, search_from: int) -> dt.date | None:
+    """사이트 화면에 실제로 찍혀 있는 날짜를 그대로 읽어온다(계산하지 않음).
+
+    "저작권" 문구 이후 구간(참조 줄보다 앞, 제목보다 앞)에서 처음 만나는
+    'YYYY.MM.DD' 또는 'YYYY-MM-DD' 형식의 줄을 사이트가 표시 중인 날짜로
+    본다. 형식이 바뀌어 못 찾으면 None을 돌려주고, 호출하는 쪽에서 한국시간
+    계산값으로 폴백한다.
+    """
+    m = PAGE_DATE_PATTERN.search(text, search_from)
+    if not m:
+        return None
+    try:
+        return dt.date(int(m.group("y")), int(m.group("m")), int(m.group("d")))
+    except ValueError:
+        return None
+
+
 def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayContent:
     """오늘(또는 지정한 날짜)의 매일성경 콘텐츠를 가져온다.
 
@@ -84,8 +117,14 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
     날짜별 접속 URL을 어떻게 받는지(쿼리 파라미터 등)는 확인되지 않았으므로,
     우선 "오늘" 페이지만 지원한다. 오디오 URL은 날짜로부터 결정적으로
     계산되므로 스크래핑 성공 여부와 무관하게 항상 만들어진다.
+
+    화면에 보여줄 날짜(date_str)는 원칙적으로 사이트 화면에 실제로 찍힌
+    날짜를 그대로 읽어서 쓴다(_extract_page_date) — 서버 시계로 "오늘"을
+    계산하는 것보다 원본 값을 그대로 읽는 쪽이 더 정확하다(2026-09-02,
+    정표님 제안). target_date 인자(또는 기본값인 한국시간 계산값)는 사이트
+    형식이 바뀌어 날짜를 못 찾았을 때만 쓰이는 안전장치다.
     """
-    target_date = target_date or dt.date.today()
+    fallback_date = target_date or dt.datetime.now(KST).date()
 
     resp = requests.get(
         BASE_URL,
@@ -97,15 +136,18 @@ def fetch_today(target_date: dt.date | None = None, timeout: int = 20) -> TodayC
     soup = BeautifulSoup(resp.text, "html.parser")
     text = soup.get_text("\n", strip=True)
 
-    content = TodayContent(date_str=target_date.isoformat(), raw_text=text)
-    content.mp3_url = build_mp3_url(target_date)
-
     # "찬송가 N장" 같은 문구가 페이지 앞쪽(성경 본문 쪽)에도 한 번, 제목/참조
     # 줄에도 한 번, 이렇게 두 번 나오는 것으로 확인됐다. 그래서 이미 안정적으로
     # 찾은 "저작권" 문구(성경 본문 바로 뒤) 이후부터만 제목/참조 줄을 찾아야
-    # 앞쪽의 것과 혼동하지 않는다.
+    # 앞쪽의 것과 혼동하지 않는다. 날짜도 같은 구간에서 찾는다.
     copyright_idx = text.find("저작권")
     search_from = copyright_idx if copyright_idx != -1 else 0
+
+    page_date = _extract_page_date(text, search_from)
+    target_date = page_date or fallback_date
+
+    content = TodayContent(date_str=target_date.isoformat(), raw_text=text)
+    content.mp3_url = build_mp3_url(target_date)
 
     ref_end = _extract_title_and_ref(content, text, search_from)
     if content.verse_ref:
